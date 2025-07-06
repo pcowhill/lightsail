@@ -1,27 +1,51 @@
 from aiohttp import web
-import asyncio
+import os
 
-connected_clients = set()
+chat_connected_clients = set()
 
-# WebSocket handler
-async def websocket_handler(request):
+# Chat WebSocket handler
+async def chat_websocket_handler(request):
   ws = web.WebSocketResponse()
   await ws.prepare(request)
 
-  connected_clients.add(ws)
-  print("Client connected.  Total: ", len(connected_clients))
+  chat_connected_clients.add(ws)
+  print("Client connected.  Total: ", len(chat_connected_clients))
 
   try:
     async for msg in ws:
       if msg.type == web.WSMsgType.TEXT:
-        for client in connected_clients:
+        for client in chat_connected_clients:
           if not client.closed and client != ws:
             await client.send_str(f"{msg.data}")
       elif msg.type == web.WSMsgType.ERROR:
         print(f"WebSocket error: {ws.exception()}")
   finally:
-    connected_clients.remove(ws)
-    print("Client disconnected.  Total: ", len(connected_clients))
+    chat_connected_clients.remove(ws)
+    print("Client disconnected.  Total: ", len(chat_connected_clients))
+
+  return ws
+
+draw_connected_clients = set()
+
+# Chat WebSocket handler
+async def draw_websocket_handler(request):
+  ws = web.WebSocketResponse()
+  await ws.prepare(request)
+
+  draw_connected_clients.add(ws)
+  print("Client connected.  Total: ", len(draw_connected_clients))
+
+  try:
+    async for msg in ws:
+      if msg.type == web.WSMsgType.TEXT:
+        for client in draw_connected_clients:
+          if not client.closed and client != ws:
+            await client.send_str(f"{msg.data}")
+      elif msg.type == web.WSMsgType.ERROR:
+        print(f"WebSocket error: {ws.exception()}")
+  finally:
+    draw_connected_clients.remove(ws)
+    print("Client disconnected.  Total: ", len(draw_connected_clients))
 
   return ws
 
@@ -33,8 +57,10 @@ async def index(request):
 app = web.Application()
 app.add_routes([
   web.get('/', index),
-  web.get('/ws', websocket_handler)
+  web.get('/ws/chat', chat_websocket_handler),
+  web.get('/ws/draw', draw_websocket_handler)
 ])
+app.router.add_static('/', path=os.path.abspath('.'), show_index=True)
 
 # Run both servers on the same port
 if __name__ == "__main__":

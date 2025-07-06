@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>
+  body {
+    background: #232946;
+    color: #fffffe;
+    font-family: 'Segoe UI', Arial, sans-serif;
+    margin: 0;
+    padding: 0;
+    min-height: 100vh;
+  }
+  h1 {
+    text-align: center;
+    margin-top: 30px;
+    letter-spacing: 2px;
+    color: #eebbc3;
+  }
+  #chat {
+    background: #121629;
+    border-radius: 8px;
+    margin: 30px auto 20px auto;
+    padding: 20px;
+    width: 90%;
+    max-width: 600px;
+    height: 350px;
+    overflow-y: auto;
+    box-shadow: 0 4px 24px rgba(0,0,0,0.2);
+    font-size: 1.05em;
+  }
+  #chat p {
+    margin: 0 0 10px 0;
+    padding: 6px 10px;
+    border-radius: 5px;
+    background: #393d5b;
+    word-break: break-word;
+  }
+  #chat p:last-child {
+    margin-bottom: 0;
+  }
+  #name, #msg {
+    width: 200px;
+    padding: 10px;
+    margin: 0 10px 10px 0;
+    border: none;
+    border-radius: 5px;
+    background: #393d5b;
+    color: #fffffe;
+    font-size: 1em;
+    outline: none;
+    transition: background 0.2s;
+    display: block;
+    margin-left: auto;
+    margin-right: auto;
+  }
+  #name:focus, #msg:focus {
+    background: #eebbc3;
+    color: #232946;
+  }
+  #msg {
+    width: 350px;
+    max-width: 60vw;
+  }
+  button {
+    padding: 10px 22px;
+    background: #eebbc3;
+    color: #232946;
+    border: none;
+    border-radius: 5px;
+    font-weight: bold;
+    font-size: 1em;
+    cursor: pointer;
+    transition: background 0.2s, color 0.2s;
+    display: block;
+    margin-left: auto;
+    margin-right: auto;
+  }
+  button:hover {
+    background: #fffffe;
+    color: #232946;
+  }
+  .input-row {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    margin-bottom: 30px;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+</style>
+<html>
+  <head>
+    <title>WebSocket Chat</title>
+  </head>
+  <body>
+    <h1>WebSocket Chat</h1>
+    <input id="name" type="text" placeholder="Enter Name...">
+    <div id="chat"></div>
+    <input id="msg" type="text" placeholder="Type a message ..." onkeydown="if(event.key==='Enter'){sendMessage();}">
+    <button onclick="sendMessage()">Send</button>
+    
+    <script>
+      const ws = new WebSocket(`ws://${location.host}/ws/chat`);
+
+      ws.onmessage = (event) => {
+        const chat = document.getElementById("chat");
+        chat.innerHTML += `<p>${event.data}</p>`;
+        chat.scrollTop = chat.scrollHeight;
+      };
+
+      function sendMessage() {
+        const chat = document.getElementById("chat");
+        const input = document.getElementById("msg");
+        const name = document.getElementById("name");
+        chat.innerHTML += `<p>You: ${input.value}</p>`;
+        ws.send(`${name.value}: ${input.value}`);
+        input.value = "";
+        chat.scrollTop = chat.scrollHeight;
+      }
+    </script>
+  </body>
+</html>

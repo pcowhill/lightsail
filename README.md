@@ -2,6 +2,17 @@
 
 ## For Developers
 
+### Acquiring the Code
+
+For the purposes of performing **development**, a git clone should be created.  For example:
+
+`git clone https://github.com/pcowhill/lightsail.git`
+
+For the purposes of performing **deployment**, you can simply get a copy of the code without using
+git.  With wget, this would be:
+
+`wget https://github.com/pcowhill/lightsail/archive/refs/heads/main.zip`
+
 ### Set-Up the Environment
 
 First create a virtual environment.

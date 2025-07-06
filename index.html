@@ -1,32 +1,78 @@
 <!DOCTYPE html>
-<html>
-  <head>
-    <title>WebSocket Chat</title>
-  </head>
-  <body>
-    <h1>WebSocket Chat</h1>
-    <input id="name" type="text" placeholder="Enter Name...">
-    <div id="chat"></div>
-    <input id="msg" type="text" placeholder="Type a message ..." onkeydown="if(event.key==='Enter'){sendMessage();}">
-    <button onclick="sendMessage()">Send</button>
-    
-    <script>
-      const ws = new WebSocket(`ws://${location.host}/ws`);
-      console.log(`ws://${location.host}/ws`)
-
-      ws.onmessage = (event) => {
-        const chat = document.getElementById("chat");
-        chat.innerHTML += `<p>${event.data}</p>`;
-      };
-
-      function sendMessage() {
-        const chat = document.getElementById("chat");
-        const input = document.getElementById("msg");
-        const name = document.getElementById("name");
-        chat.innerHTML += `<p>You: ${input.value}</p>`;
-        ws.send(`${name.value}: ${input.value}`);
-        input.value = "";
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Lightsail Tower</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    body {
+      background: linear-gradient(135deg, #232526 0%, #414345 100%);
+      color: #f5f5f5;
+      font-family: 'Segoe UI', Arial, sans-serif;
+      margin: 0;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+    }
+    .container {
+      background: rgba(34, 34, 34, 0.85);
+      padding: 2rem 3rem;
+      border-radius: 16px;
+      box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.37);
+      text-align: center;
+    }
+    h1 {
+      margin-bottom: 1.5rem;
+      font-size: 2.5rem;
+      letter-spacing: 2px;
+      color: #ffb347;
+      text-shadow: 1px 1px 8px #222;
+    }
+    .links {
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+      margin-top: 1rem;
+    }
+    .links a {
+      text-decoration: none;
+      color: #232526;
+      background: linear-gradient(90deg, #ffb347 0%, #ffcc33 100%);
+      padding: 0.75rem 2rem;
+      border-radius: 8px;
+      font-size: 1.2rem;
+      font-weight: 600;
+      transition: background 0.2s, color 0.2s, transform 0.2s;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+    }
+    .links a:hover {
+      background: linear-gradient(90deg, #ffcc33 0%, #ffb347 100%);
+      color: #232526;
+      transform: translateY(-2px) scale(1.03);
+    }
+    @media (max-width: 600px) {
+      .container {
+        padding: 1rem;
       }
-    </script>
-  </body>
+      h1 {
+        font-size: 2rem;
+      }
+      .links a {
+        font-size: 1rem;
+        padding: 0.6rem 1rem;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Lightsail Tower</h1>
+    <div class="links">
+      <a href="chat/index.html">WebSocket Chat</a>
+      <a href="draw/index.html">WebSocket Draw</a>
+    </div>
+  </div>
+</body>
 </html>

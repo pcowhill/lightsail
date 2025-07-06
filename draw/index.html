@@ -1,0 +1,239 @@
+<html>
+  <head>
+    <title>WebSocket Draw</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+      html, body {
+        height: 100%;
+        margin: 0;
+        padding: 0;
+        font-family: 'Segoe UI', Arial, sans-serif;
+        background: #f4f6fa;
+        color: #222;
+      }
+      body {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        min-height: 100vh;
+        justify-content: flex-start;
+        padding: 0 8px;
+      }
+      h1 {
+        margin-top: 24px;
+        margin-bottom: 16px;
+        font-size: 2rem;
+        letter-spacing: 1px;
+        color: #333;
+        text-align: center;
+      }
+      .canvas-container {
+        width: 100%;
+        max-width: 600px;
+        background: #fff;
+        border-radius: 12px;
+        box-shadow: 0 2px 12px rgba(0,0,0,0.07);
+        padding: 16px;
+        margin-bottom: 18px;
+        display: flex;
+        justify-content: center;
+      }
+      #drawCanvas {
+        width: 100%;
+        height: auto;
+        max-width: 100%;
+        border: 2px solid #bbb;
+        border-radius: 8px;
+        background: #fff;
+        touch-action: none;
+        box-shadow: 0 1px 6px rgba(0,0,0,0.04);
+        display: block;
+      }
+      .color-buttons {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        justify-content: center;
+        margin-bottom: 24px;
+      }
+      .color-buttons button {
+        min-width: 60px;
+        padding: 10px 0;
+        border: none;
+        border-radius: 6px;
+        font-size: 1rem;
+        font-weight: 500;
+        cursor: pointer;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+        transition: transform 0.08s, box-shadow 0.08s;
+      }
+      .color-buttons button:active {
+        transform: scale(0.97);
+        box-shadow: 0 0 0 rgba(0,0,0,0);
+      }
+      @media (max-width: 700px) {
+        .canvas-container {
+          padding: 8px;
+        }
+        #drawCanvas {
+          width: 100vw;
+          max-width: 100vw;
+          height: 60vw;
+          max-height: 70vw;
+        }
+      }
+      @media (max-width: 480px) {
+        h1 {
+          font-size: 1.3rem;
+        }
+        .color-buttons button {
+          min-width: 44px;
+          font-size: 0.95rem;
+          padding: 8px 8px;
+        }
+        .canvas-container {
+          padding: 4px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <h1>WebSocket Draw</h1>
+    <div class="canvas-container">
+      <canvas id="drawCanvas" width="600" height="400"></canvas>
+    </div>
+    <div class="color-buttons">
+      <button onclick="setColor('white')" style="background:white; color:black; border:1px solid #ccc;">White</button>
+      <button onclick="setColor('black')" style="background:black; color:white;">Black</button>
+      <button onclick="setColor('red')" style="background:red; color:white;">Red</button>
+      <button onclick="setColor('green')" style="background:green; color:white;">Green</button>
+      <button onclick="setColor('blue')" style="background:blue; color:white;">Blue</button>
+      <button onclick="setColor('purple')" style="background:purple; color:white;">Purple</button>
+    </div>
+    <div class = "color-buttons">
+      <button onclick="clearCanvas()" style="background:#f44336; color:white;">Clear</button>
+      <button onclick="downloadCanvas()" style="background:#2196f3; color:white;">PNG</button>
+    </div>
+    <script>
+      const canvas = document.getElementById('drawCanvas');
+      const ctx = canvas.getContext('2d');
+      let drawing = false;
+      let brushColor = 'black';
+      let lastPos = null;
+
+      function setColor(color) {
+        brushColor = color;
+      }
+
+      function getPos(e) {
+        const rect = canvas.getBoundingClientRect();
+        let clientX, clientY;
+        if (e.touches && e.touches.length > 0) {
+          clientX = e.touches[0].clientX;
+          clientY = e.touches[0].clientY;
+        } else if (e.changedTouches && e.changedTouches.length > 0) {
+          clientX = e.changedTouches[0].clientX;
+          clientY = e.changedTouches[0].clientY;
+        } else {
+          clientX = e.clientX;
+          clientY = e.clientY;
+        }
+        // Map to canvas coordinates
+        const x = (clientX - rect.left) * (canvas.width / rect.width);
+        const y = (clientY - rect.top) * (canvas.height / rect.height);
+        return { x, y };
+      }
+
+      function startDraw(e) {
+        drawing = true;
+        lastPos = getPos(e);
+        ctx.beginPath();
+        ctx.moveTo(lastPos.x, lastPos.y);
+        e.preventDefault();
+      }
+
+      function draw(e) {
+        if (!drawing) return;
+        const pos = getPos(e);
+        ctx.lineTo(pos.x, pos.y);
+        ctx.strokeStyle = brushColor;
+        ctx.lineWidth = 3;
+        ctx.lineCap = 'round';
+        ctx.stroke();
+        sendDraw(lastPos, pos, brushColor);
+        lastPos = pos;
+        e.preventDefault();
+      }
+
+      function endDraw(e) {
+        drawing = false;
+        ctx.closePath();
+        lastPos = null;
+        e.preventDefault();
+      }
+
+      canvas.addEventListener('mousedown', startDraw);
+      canvas.addEventListener('mousemove', draw);
+      canvas.addEventListener('mouseup', endDraw);
+      canvas.addEventListener('mouseleave', endDraw);
+
+      canvas.addEventListener('touchstart', startDraw, { passive: false });
+      canvas.addEventListener('touchmove', draw, { passive: false });
+      canvas.addEventListener('touchend', endDraw, { passive: false });
+      canvas.addEventListener('touchcancel', endDraw, { passive: false });
+
+      function clearCanvas() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ws.send(JSON.stringify({ type: 'clear' }));
+      }
+
+      function downloadCanvas() {
+        // Create a temporary canvas to add a white background
+        const tempCanvas = document.createElement('canvas');
+        tempCanvas.width = canvas.width;
+        tempCanvas.height = canvas.height;
+        const tempCtx = tempCanvas.getContext('2d');
+        // Fill with white background
+        tempCtx.fillStyle = 'white';
+        tempCtx.fillRect(0, 0, tempCanvas.width, tempCanvas.height);
+        // Draw the original canvas on top
+        tempCtx.drawImage(canvas, 0, 0);
+        // Download the image
+        const link = document.createElement('a');
+        link.download = 'drawing.png';
+        link.href = tempCanvas.toDataURL('image/png');
+        link.click();
+      }
+
+      const ws = new WebSocket(`ws://${location.host}/ws/draw`);
+
+      ws.onmessage = function(event) {
+        const msg = JSON.parse(event.data);
+        if (msg.type === 'draw') {
+          ctx.save();
+          ctx.strokeStyle = msg.color;
+          ctx.lineWidth = 3;
+          ctx.lineCap = 'round';
+          ctx.beginPath();
+          ctx.moveTo(msg.from.x, msg.from.y);
+          ctx.lineTo(msg.to.x, msg.to.y);
+          ctx.stroke();
+          ctx.closePath();
+          ctx.restore();
+        }
+        if (msg.type === 'clear') {
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+        }
+      };
+
+      function sendDraw(from, to, color) {
+        ws.send(JSON.stringify({
+          type: 'draw',
+          from,
+          to,
+          color
+        }));
+      }
+    </script>
+  </body>
+</html>
