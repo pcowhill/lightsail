@@ -6,12 +6,13 @@
   <body>
     <h1>WebSocket Chat</h1>
     <input id="name" type="text" placeholder="Enter Name...">
-    <input id="msg" type="text" placeholder="Type a message ...">
-    <button onclick="sendMessage()">Send</button>
     <div id="chat"></div>
-
+    <input id="msg" type="text" placeholder="Type a message ..." onkeydown="if(event.key==='Enter'){sendMessage();}">
+    <button onclick="sendMessage()">Send</button>
+    
     <script>
-      const ws = new WebSocket("ws://localhost:8765");
+      const ws = new WebSocket(`ws://${location.host}/ws`);
+      console.log(`ws://${location.host}/ws`)
 
       ws.onmessage = (event) => {
         const chat = document.getElementById("chat");

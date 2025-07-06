@@ -18,7 +18,12 @@ Then, install the necessary dependencies.
 `python -m pip install --upgrade pip`
 `pip install -r requirements.txt`
 
-Note: If new packages are used in the course of development, "requirements.txt" can be updated.
+Note: If new packages are added in the course of development, "requirements.txt" can be updated.
 
 `pip freeze > requirements.txt`
 
+### Running the Code
+
+To run the server, simply run:
+
+`python ./main.py`

@@ -1,23 +1,41 @@
+from aiohttp import web
 import asyncio
-import websockets
 
 connected_clients = set()
 
-async def handler(websocket):
-  connected_clients.add(websocket)
+# WebSocket handler
+async def websocket_handler(request):
+  ws = web.WebSocketResponse()
+  await ws.prepare(request)
+
+  connected_clients.add(ws)
+  print("Client connected.  Total: ", len(connected_clients))
+
   try:
-    async for message in websocket:
-      print(f"Received: {message}")
-      for client in connected_clients:
-        if client != websocket:
-          await client.send(f"{message}")
+    async for msg in ws:
+      if msg.type == web.WSMsgType.TEXT:
+        for client in connected_clients:
+          if not client.closed and client != ws:
+            await client.send_str(f"{msg.data}")
+      elif msg.type == web.WSMsgType.ERROR:
+        print(f"WebSocket error: {ws.exception()}")
   finally:
-    connected_clients.remove(websocket)
+    connected_clients.remove(ws)
+    print("Client disconnected.  Total: ", len(connected_clients))
 
-async def main():
-  async with websockets.serve(handler, "localhost", 8765):
-    print("✅ WebSocket server running on ws://localhost:8765")
-    await asyncio.Future()
+  return ws
 
+# HTTP handler
+async def index(request):
+  return web.FileResponse('index.html')
+
+# App setup
+app = web.Application()
+app.add_routes([
+  web.get('/', index),
+  web.get('/ws', websocket_handler)
+])
+
+# Run both servers on the same port
 if __name__ == "__main__":
-  asyncio.run(main())
+  web.run_app(app, host='0.0.0.0', port=8080)
