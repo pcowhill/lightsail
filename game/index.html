@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Dynamic Fullscreen Canvas Game</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <style>
+    html, body {
+      height: 100%;
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      background: linear-gradient(135deg, #232526 0%, #414345 100%);
+    }
+    body {
+      width: 100vw;
+      height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    #gameCanvas {
+      display: block;
+      background: rgba(30, 30, 40, 0.95);
+      box-shadow: 0 0 32px 8px rgba(0,0,0,0.4);
+      width: 100vw;
+      height: 100vh;
+      max-width: 100vw;
+      max-height: 100vh;
+      transition: box-shadow 0.3s;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="gameCanvas"></canvas>
+  <script>
+    const ws = new WebSocket(`ws://${location.host}/ws/game`);
+
+    const myId = Math.floor(Math.random() * 65536);
+
+    const robinImg = new Image();
+    const birdImages = ['Robin.png', 'Cardinal.png', 'Pigeon.png', 'Woodpecker.png'];
+    robinImg.src = birdImages[Math.floor(Math.random() * birdImages.length)];
+    let rightFacing = true;
+
+    ws.addEventListener('open', () => {
+      ws.send(JSON.stringify({
+        id: myId,
+        image: robinImg.src,
+        posX: 0,
+        posY: 0,
+        velX: 0,
+        velY: 0,
+        rightFacing: rightFacing
+      }));
+    });
+
+    let otherPlayers = {};
+
+    ws.onmessage = function(event) {
+      const msg = JSON.parse(event.data);
+      otherPlayers[msg.id] = msg;
+    }
+
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const grassImg = new Image();
+    const resolutionScale = 8;
+    let grassPattern = null;
+    let grassPatternCanvas = null;
+    let lastXSpeed = 0;
+    let lastYSpeed = 0;
+
+    grassImg.src = 'Grass.png';
+    grassImg.onload = () => {
+      // Create an offscreen canvas at half the image size
+      grassPatternCanvas = document.createElement('canvas');
+      grassPatternCanvas.width = grassImg.width / resolutionScale;
+      grassPatternCanvas.height = grassImg.height / resolutionScale;
+      const patternCtx = grassPatternCanvas.getContext('2d');
+      patternCtx.drawImage(grassImg, 0, 0, grassImg.width, grassImg.height, 0, 0, grassPatternCanvas.width, grassPatternCanvas.height);
+      grassPattern = ctx.createPattern(grassPatternCanvas, 'repeat');
+    };
+
+    const nestImg = new Image();
+    nestImg.src = 'Nest.png';
+
+    function resizeCanvas() {
+      // Handle high-DPI screens
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = window.innerWidth * dpr;
+      canvas.height = window.innerHeight * dpr;
+      canvas.style.width = window.innerWidth + 'px';
+      canvas.style.height = window.innerHeight + 'px';
+      ctx.setTransform(1, 0, 0, 1, 0, 0); // Reset transform
+      ctx.scale(dpr, dpr);
+    }
+
+    function draw() {
+      // Track the player's position in world coordinates
+      if (!window.playerPos) {
+        window.playerPos = { x: 0, y: 0 };
+      }
+
+      // Movement speed in pixels per frame
+      const speed = 4;
+      let ySpeed = 0;
+      let xSpeed = 0;
+
+
+      // Track pressed keys
+      if (!window.keys) {
+        window.keys = {};
+        window.addEventListener('keydown', e => { window.keys[e.key] = true; });
+        window.addEventListener('keyup', e => { window.keys[e.key] = false; });
+      }
+
+      // Touch controls for mobile/tap
+      if (!window.touchDirection) window.touchDirection = {};
+      if (!window.touchSetup) {
+        canvas.addEventListener('touchstart', function(e) {
+          if (e.touches.length > 0) {
+        const rect = canvas.getBoundingClientRect();
+        const touch = e.touches[0];
+        const x = touch.clientX - rect.left;
+        const y = touch.clientY - rect.top;
+        const w = rect.width;
+        const h = rect.height;
+        window.touchDirection = {};
+        // Divide canvas into 4 zones: left, right, top, bottom
+        if (x < w * 0.25) window.touchDirection.left = true;
+        else if (x > w * 0.75) window.touchDirection.right = true;
+        if (y < h * 0.25) window.touchDirection.up = true;
+        else if (y > h * 0.75) window.touchDirection.down = true;
+          }
+        });
+        canvas.addEventListener('touchend', function(e) {
+          window.touchDirection = {};
+        });
+        window.touchSetup = true;
+      }
+
+      // Update player position based on keys or touch
+      if (window.keys['ArrowLeft'] || window.keys['a'] || window.touchDirection.left) {
+        xSpeed -= speed;
+        rightFacing = false;
+      }
+      if (window.keys['ArrowRight'] || window.keys['d'] || window.touchDirection.right) {
+        xSpeed += speed;
+        rightFacing = true;
+      }
+      if (window.keys['ArrowUp'] || window.keys['w'] || window.touchDirection.up) ySpeed -= speed;
+      if (window.keys['ArrowDown'] || window.keys['s'] || window.touchDirection.down) ySpeed += speed;
+
+      window.playerPos.x += xSpeed
+      window.playerPos.y += ySpeed
+
+      if (xSpeed != lastXSpeed || ySpeed != lastYSpeed) {
+        ws.send(JSON.stringify({
+          id: myId,
+          image: robinImg.src,
+          posX: window.playerPos.x,
+          posY: window.playerPos.y,
+          velX: xSpeed,
+          velY: ySpeed,
+          rightFacing: rightFacing
+        }));
+        lastXSpeed = xSpeed;
+        lastYSpeed = ySpeed;
+      }
+
+      // Clear canvas
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      // Draw grass pattern background, offset by player position
+      if (grassPattern) {
+        // Calculate offset so the pattern scrolls with player movement
+        const dpr = window.devicePixelRatio || 1;
+        const offsetX = -window.playerPos.x % grassPatternCanvas.width;
+        const offsetY = -window.playerPos.y % grassPatternCanvas.height;
+        ctx.save();
+        ctx.translate(offsetX, offsetY);
+        ctx.fillStyle = grassPattern;
+        ctx.fillRect(
+          -offsetX,
+          -offsetY,
+          canvas.width / dpr + grassPatternCanvas.width,
+          canvas.height / dpr + grassPatternCanvas.height
+        );
+        ctx.restore();
+      }
+
+      if (nestImg.complete && nestImg.naturalWidth > 0) {
+        const dpr = window.devicePixelRatio || 1;
+        const centerX = (canvas.width / dpr) / 2;
+        const centerY = (canvas.height / dpr) / 2;
+        const imgW = nestImg.width / resolutionScale;
+        const imgH = nestImg.height / resolutionScale;
+        // Offset nest by negative player position so it appears fixed in world space
+        const nestX = centerX - imgW / 2 - window.playerPos.x;
+        const nestY = centerY - imgH / 2 - window.playerPos.y;
+        ctx.drawImage(nestImg, nestX, nestY, imgW, imgH);
+      }
+
+      // Draw other players
+      for (const id in otherPlayers) {
+        const player = otherPlayers[id];
+        playerImg = new Image()
+        playerImg.src = player.image
+        if (playerImg.complete && playerImg.naturalWidth > 0) {
+          const dpr = window.devicePixelRatio || 1;
+          const centerX = (canvas.width / dpr) / 2;
+          const centerY = (canvas.height / dpr) / 2;
+          const imgW = playerImg.width / resolutionScale;
+          const imgH = playerImg.height / resolutionScale;
+
+          // Update position
+          player.posX += player.velX;
+          player.posY += player.velY;
+
+          // Calculate position relative to local player
+          const drawX = centerX - imgW / 2 + (player.posX - window.playerPos.x);
+          const drawY = centerY - imgH / 2 + (player.posY - window.playerPos.y);
+          if (player.rightFacing) {
+            ctx.drawImage(playerImg, drawX, drawY, imgW, imgH);
+          } else {
+            ctx.save();
+            ctx.translate(drawX + imgW, drawY);
+            ctx.scale(-1, 1);
+            ctx.drawImage(playerImg, 0, 0, imgW, imgH);
+            ctx.restore();
+          }
+        }
+      }
+
+      // Draw robin in the center of the screen
+      if (robinImg.complete && robinImg.naturalWidth > 0) {
+        const dpr = window.devicePixelRatio || 1;
+        const centerX = (canvas.width / dpr) / 2;
+        const centerY = (canvas.height / dpr) / 2;
+        const imgW = robinImg.width / resolutionScale;
+        const imgH = robinImg.height / resolutionScale;
+        if (rightFacing) {
+          ctx.drawImage(robinImg, centerX - imgW / 2, centerY - imgH / 2, imgW, imgH);
+        } else {
+            ctx.save();
+            ctx.translate(centerX + imgW / 2, centerY - imgH / 2);
+            ctx.scale(-1, 1);
+            ctx.drawImage(robinImg, 0, 0, imgW, imgH);
+            ctx.restore();
+        }
+      }
+    }
+
+    function loop() {
+      draw();
+      requestAnimationFrame(loop);
+    }
+
+    window.addEventListener('resize', () => {
+      resizeCanvas();
+    });
+
+    window.addEventListener('orientationchange', () => {
+      setTimeout(resizeCanvas, 200);
+    });
+
+    // Initial setup
+    resizeCanvas();
+    loop();
+  </script>
+</body>
+</html>
