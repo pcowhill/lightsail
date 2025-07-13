@@ -38,3 +38,33 @@ Note: If new packages are added in the course of development, "requirements.txt"
 To run the server, simply run:
 
 `python ./main.py`
+
+If you are connected via a terminal that might timeout (e.g a terminal connected via SSH), you might want to use `screen` to allow the server to continue running after the terminal has timed out.
+
+First, see all current sessions that exist:
+
+`screen -ls`
+
+To connect to an existing session, run this.  This will attach you to that session.
+
+`screen -r session_name`
+
+To start a new session, run this.  This will also attach you to that session.
+
+`screen -S session_name`
+
+To detatch from an opened session without closing it, press:
+
+`Ctrl + A, then D`
+
+To kill a session while attached tp it, either run:
+
+`exit`
+
+Or use the shortcut:
+
+`Ctrl + D`
+
+To kill a session while not attached to it, run:
+
+`screen -S session_name -X quit`
