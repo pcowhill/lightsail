@@ -1,5 +1,7 @@
 from aiohttp import web
 import os
+import json
+import random
 
 chat_connected_clients = set()
 
@@ -51,21 +53,41 @@ async def draw_websocket_handler(request):
 
 game_connected_clients = set()
 
+worms = [[random.randint(-1000, 1000) for i in range(2)] for j in range(10)]
+
 # Chat WebSocket handler
 async def game_websocket_handler(request):
   ws = web.WebSocketResponse()
   await ws.prepare(request)
 
   game_connected_clients.add(ws)
+  ws_id = random.getrandbits(32)
   print("Client connected.  Total: ", len(game_connected_clients))
+
+  worm_data = {
+    "type": "worms",
+    "positions": worms
+  }
+  await ws.send_str(json.dumps(worm_data))
 
   try:
     async for msg in ws:
       if msg.type == web.WSMsgType.TEXT:
-        print(msg.data)
-        for client in game_connected_clients:
-          if not client.closed and client != ws:
-            await client.send_str(f"{msg.data}")
+        try:
+          data = json.loads(msg.data)
+        except json.JSONDecodeError as e:
+          print(f"JSON decode error: {e}")
+          continue
+        if data["type"] in ["movement", "connect"]:
+          data["id"] = ws_id
+          for client in game_connected_clients:
+            if not client.closed and client != ws:
+                await client.send_str(json.dumps(data))
+        elif data["type"] == "eat":
+          worm_data["positions"][data["worm_id"]] = [random.randint(-1000, 1000) for i in range(2)]
+          for client in game_connected_clients:
+            if not client.closed:
+              await ws.send_str(json.dumps(worm_data))
       elif msg.type == web.WSMsgType.ERROR:
         print(f"WebSocket error: {ws.exception()}")
   finally:
@@ -73,7 +95,11 @@ async def game_websocket_handler(request):
     print("Client disconnected.  Total: ", len(game_connected_clients))
     for client in game_connected_clients:
       if not client.closed:
-        await client.send_str(f"{msg.data}")
+        data = {
+          "type": "disconnect",
+          "id": ws_id
+        }
+        await client.send_str(json.dumps(data))
 
   return ws
 

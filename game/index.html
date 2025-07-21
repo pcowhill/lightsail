@@ -24,9 +24,6 @@
       background: rgba(30, 30, 40, 0.95);
       box-shadow: 0 0 32px 8px rgba(0,0,0,0.4);
       width: 100vw;
-      height: 100vh;
-      max-width: 100vw;
-      max-height: 100vh;
       transition: box-shadow 0.3s;
     }
   </style>
@@ -36,8 +33,6 @@
   <script>
     const ws = new WebSocket(`ws://${location.host}/ws/game`);
 
-    const myId = Math.floor(Math.random() * 65536);
-
     const robinImg = new Image();
     const birdImages = ['Robin.png', 'Cardinal.png', 'Pigeon.png', 'Woodpecker.png'];
     robinImg.src = birdImages[Math.floor(Math.random() * birdImages.length)];
@@ -45,21 +40,45 @@
 
     ws.addEventListener('open', () => {
       ws.send(JSON.stringify({
-        id: myId,
+        type: "movement",
         image: robinImg.src,
         posX: 0,
         posY: 0,
         velX: 0,
         velY: 0,
-        rightFacing: rightFacing
+        rightFacing: rightFacing,
+        boosting: false
+      }));
+      ws.send(JSON.stringify({
+        type: "connect"
       }));
     });
 
     let otherPlayers = {};
+    let worms = [];
 
     ws.onmessage = function(event) {
       const msg = JSON.parse(event.data);
-      otherPlayers[msg.id] = msg;
+      if (msg.type == "movement") {
+        otherPlayers[msg.id] = msg;
+      } else if (msg.type == "disconnect") {
+        if (otherPlayers[msg.id]) {
+          delete otherPlayers[msg.id];
+        }
+      } else if (msg.type == "connect") {
+        ws.send(JSON.stringify({
+          type: "movement",
+          image: robinImg.src,
+          posX: window.playerPos.x,
+          posY: window.playerPos.y,
+          velX: lastXSpeed,
+          velY: lastYSpeed,
+          rightFacing: rightFacing,
+          boosting: boostUntil > Date.now()
+        }));
+      } else if (msg.type == "worms") {
+        worms = msg.positions;
+      }
     }
 
     const canvas = document.getElementById('gameCanvas');
@@ -70,6 +89,7 @@
     let grassPatternCanvas = null;
     let lastXSpeed = 0;
     let lastYSpeed = 0;
+    let boostUntil = 0;
 
     grassImg.src = 'Grass.png';
     grassImg.onload = () => {
@@ -84,6 +104,8 @@
 
     const nestImg = new Image();
     nestImg.src = 'Nest.png';
+    const wormImg = new Image();
+    wormImg.src = 'worm.png';
 
     function resizeCanvas() {
       // Handle high-DPI screens
@@ -103,7 +125,10 @@
       }
 
       // Movement speed in pixels per frame
-      const speed = 4;
+      let speed = 4;
+      if (boostUntil > Date.now()) {
+        speed = 12;
+      }
       let ySpeed = 0;
       let xSpeed = 0;
 
@@ -157,13 +182,14 @@
 
       if (xSpeed != lastXSpeed || ySpeed != lastYSpeed) {
         ws.send(JSON.stringify({
-          id: myId,
+          type: "movement",
           image: robinImg.src,
           posX: window.playerPos.x,
           posY: window.playerPos.y,
           velX: xSpeed,
           velY: ySpeed,
-          rightFacing: rightFacing
+          rightFacing: rightFacing,
+          boosting: boostUntil > Date.now()
         }));
         lastXSpeed = xSpeed;
         lastYSpeed = ySpeed;
@@ -202,6 +228,34 @@
         ctx.drawImage(nestImg, nestX, nestY, imgW, imgH);
       }
 
+      // Draw worms
+      for (let i = 0; i < worms.length; i++) {
+        positions = worms[i];
+        const dpr = window.devicePixelRatio || 1;
+        const centerX = (canvas.width / dpr) / 2;
+        const centerY = (canvas.height / dpr) / 2;
+        const imgW = wormImg.width / resolutionScale;
+        const imgH = wormImg.height / resolutionScale;
+
+        // Calculate position relative to local player
+        const drawX = centerX - imgW / 2 + (positions[0] - window.playerPos.x);
+        const drawY = centerY - imgH / 2 + (positions[1] - window.playerPos.y);
+        ctx.drawImage(wormImg, drawX, drawY, imgW, imgH);
+
+        // Check if player is close enough to "eat" the worm (distance < threshold)
+        const dx = positions[0] - window.playerPos.x;
+        const dy = positions[1] - window.playerPos.y;
+        const distanceSquared = dx * dx + dy * dy;
+        const eatThreshold = 40; // pixels, adjust as needed
+        if (distanceSquared < eatThreshold*eatThreshold) {
+          ws.send(JSON.stringify({
+            type: "eat",
+            worm_id: i
+          }));
+          boostUntil = Date.now() + 3000 // milliseconds
+        }
+      }
+
       // Draw other players
       for (const id in otherPlayers) {
         const player = otherPlayers[id];
@@ -222,11 +276,27 @@
           const drawX = centerX - imgW / 2 + (player.posX - window.playerPos.x);
           const drawY = centerY - imgH / 2 + (player.posY - window.playerPos.y);
           if (player.rightFacing) {
+            if (player.boosting) {
+              ctx.save();
+              ctx.shadowColor = "#FFD700";
+              ctx.shadowBlur = 32;
+              ctx.globalAlpha = 0.7;
+              ctx.drawImage(playerImg, drawX, drawY, imgW, imgH);
+              ctx.restore();
+            }
             ctx.drawImage(playerImg, drawX, drawY, imgW, imgH);
           } else {
             ctx.save();
             ctx.translate(drawX + imgW, drawY);
             ctx.scale(-1, 1);
+            if (player.boosting) {
+              ctx.save();
+              ctx.shadowColor = "#FFD700";
+              ctx.shadowBlur = 32;
+              ctx.globalAlpha = 0.7;
+              ctx.drawImage(playerImg, 0, 0, imgW, imgH);
+              ctx.restore();
+            }
             ctx.drawImage(playerImg, 0, 0, imgW, imgH);
             ctx.restore();
           }
@@ -241,13 +311,97 @@
         const imgW = robinImg.width / resolutionScale;
         const imgH = robinImg.height / resolutionScale;
         if (rightFacing) {
+          if (boostUntil > Date.now()) {
+            ctx.save();
+            ctx.shadowColor = "#FFD700";
+            ctx.shadowBlur = 32;
+            ctx.globalAlpha = 0.7;
+            ctx.drawImage(robinImg, centerX - imgW / 2, centerY - imgH / 2, imgW, imgH);
+            ctx.restore();
+          }
           ctx.drawImage(robinImg, centerX - imgW / 2, centerY - imgH / 2, imgW, imgH);
         } else {
             ctx.save();
             ctx.translate(centerX + imgW / 2, centerY - imgH / 2);
             ctx.scale(-1, 1);
+            if (boostUntil > Date.now()) {
+              ctx.save();
+              ctx.shadowColor = "#FFD700";
+              ctx.shadowBlur = 32;
+              ctx.globalAlpha = 0.7;
+              ctx.drawImage(robinImg, 0, 0, imgW, imgH);
+              ctx.restore();
+            }
             ctx.drawImage(robinImg, 0, 0, imgW, imgH);
             ctx.restore();
+        }
+      }
+
+      // Draw nest icon
+      if (nestImg.complete && nestImg.naturalWidth > 0) {
+        const dpr = window.devicePixelRatio || 1;
+        const centerX = (canvas.width / dpr) / 2;
+        const centerY = (canvas.height / dpr) / 2;
+        const imgW = nestImg.width / resolutionScale;
+        const imgH = nestImg.height / resolutionScale;
+        // Offset nest by negative player position so it appears fixed in world space
+        const nestX = centerX - imgW / 2 - window.playerPos.x;
+        const nestY = centerY - imgH / 2 - window.playerPos.y;
+        
+        const nestOnScreen =
+          nestX + imgW > 0 &&
+          nestX < canvas.width / dpr &&
+          nestY + imgH > 0 &&
+          nestY < canvas.height / dpr;
+
+        if (!nestOnScreen) {
+          // Calculate vector from player to nest in world space
+          const dx = -window.playerPos.x;
+          const dy = -window.playerPos.y;
+          const angle = Math.atan2(dy, dx);
+
+          // Edge padding for icon
+          const padding = 24;
+          const miniW = imgW / 4;
+          const miniH = imgH / 4;
+          const radius =
+            Math.min(canvas.width / dpr, canvas.height / dpr) / 2 -
+            Math.max(miniW, miniH) / 2 -
+            padding;
+
+          // Center of canvas
+          const centerX = (canvas.width / dpr) / 2;
+          const centerY = (canvas.height / dpr) / 2;
+
+          // Position on edge
+          const edgeX = centerX + radius * Math.cos(angle) - miniW / 2;
+          const edgeY = centerY + radius * Math.sin(angle) - miniH / 2;
+
+          // Draw arrow pointing toward nest
+          ctx.save();
+          ctx.translate(edgeX + miniW / 2, edgeY + miniH / 2);
+          ctx.rotate(angle + Math.PI / 2);
+
+          // Arrow
+          ctx.beginPath();
+          ctx.moveTo(0, -miniH / 2 - 10);
+          ctx.lineTo(0, -miniH / 2 - 24);
+          ctx.strokeStyle = "#FFD700";
+          ctx.lineWidth = 4;
+          ctx.stroke();
+
+          ctx.beginPath();
+          ctx.moveTo(0, -miniH / 2 - 24);
+          ctx.lineTo(-6, -miniH / 2 - 16);
+          ctx.lineTo(6, -miniH / 2 - 16);
+          ctx.closePath();
+          ctx.fillStyle = "#FFD700";
+          ctx.fill();
+
+          // Draw mini nest
+          ctx.rotate(-angle - Math.PI / 2);
+          ctx.drawImage(nestImg, -miniW / 2, -miniH / 2, miniW, miniH);
+          ctx.restore();
         }
       }
     }
