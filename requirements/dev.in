@@ -1,0 +1,9 @@
+# Development and CI tooling (never installed on the server).
+# Lock with: scripts/lock-requirements.sh  -> requirements-dev.txt
+-r runtime.in
+pytest==9.1.1
+pytest-aiohttp==1.1.1
+playwright==1.63.0
+ruff==0.16.8
+pip-audit==2.10.1
+uv==0.12.17

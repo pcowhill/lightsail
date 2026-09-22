@@ -2,8 +2,9 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Dynamic Fullscreen Canvas Game</title>
+  <title>WebSocket Game</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <link rel="stylesheet" href="/shared/demo.css">
   <style>
     html, body {
       height: 100%;
@@ -30,56 +31,89 @@
 </head>
 <body>
   <canvas id="gameCanvas"></canvas>
+  <script src="/shared/demo-socket.js"></script>
   <script>
-    const ws = new WebSocket(`ws://${location.host}/ws/game`);
-
-    const robinImg = new Image();
-    const birdImages = ['Robin.png', 'Cardinal.png', 'Pigeon.png', 'Woodpecker.png'];
-    robinImg.src = birdImages[Math.floor(Math.random() * birdImages.length)];
+    // Sprites are chosen by name; the name is what travels over the wire and
+    // every client maps it back to one of these local images. A peer can
+    // therefore never make this page load an arbitrary URL.
+    const SPRITES = { Robin: 'Robin.png', Cardinal: 'Cardinal.png', Pigeon: 'Pigeon.png', Woodpecker: 'Woodpecker.png' };
+    const spriteImages = {};
+    for (const name of Object.keys(SPRITES)) {
+      const img = new Image();
+      img.src = SPRITES[name];
+      spriteImages[name] = img;
+    }
+    const spriteNames = Object.keys(SPRITES);
+    const mySprite = spriteNames[Math.floor(Math.random() * spriteNames.length)];
+    const robinImg = spriteImages[mySprite];
     let rightFacing = true;
-
-    ws.addEventListener('open', () => {
-      ws.send(JSON.stringify({
-        type: "movement",
-        image: robinImg.src,
-        posX: 0,
-        posY: 0,
-        velX: 0,
-        velY: 0,
-        rightFacing: rightFacing,
-        boosting: false
-      }));
-      ws.send(JSON.stringify({
-        type: "connect"
-      }));
-    });
 
     let otherPlayers = {};
     let worms = [];
+    let lastXSpeed = 0;
+    let lastYSpeed = 0;
+    let boostUntil = 0;
+    window.playerPos = { x: 0, y: 0 };
 
-    ws.onmessage = function(event) {
-      const msg = JSON.parse(event.data);
-      if (msg.type == "movement") {
-        otherPlayers[msg.id] = msg;
-      } else if (msg.type == "disconnect") {
-        if (otherPlayers[msg.id]) {
-          delete otherPlayers[msg.id];
-        }
-      } else if (msg.type == "connect") {
-        ws.send(JSON.stringify({
-          type: "movement",
-          image: robinImg.src,
-          posX: window.playerPos.x,
-          posY: window.playerPos.y,
-          velX: lastXSpeed,
-          velY: lastYSpeed,
-          rightFacing: rightFacing,
-          boosting: boostUntil > Date.now()
-        }));
-      } else if (msg.type == "worms") {
-        worms = msg.positions;
-      }
+    function movementMessage() {
+      return {
+        type: "movement",
+        sprite: mySprite,
+        posX: window.playerPos.x,
+        posY: window.playerPos.y,
+        velX: lastXSpeed,
+        velY: lastYSpeed,
+        rightFacing: rightFacing,
+        boosting: boostUntil > Date.now()
+      };
     }
+
+    function isNumber(v) { return typeof v === 'number' && Number.isFinite(v); }
+
+    // Registration runs on every (re)connect: announce this player and ask
+    // the others to announce themselves. Handlers and the animation loop are
+    // created once; reconnecting only replaces the socket.
+    const socket = new LightsailDemo.DemoSocket('/ws/game', {
+      status: { overlay: true },
+      onOpen() {
+        otherPlayers = {};
+        socket.send(movementMessage());
+        socket.send({ type: "connect" });
+      },
+      onClose() {
+        otherPlayers = {};
+      },
+      onMessage(msg) {
+        if (msg.type == "movement") {
+          if (!isNumber(msg.id) || !SPRITES[msg.sprite]) return;
+          if (![msg.posX, msg.posY, msg.velX, msg.velY].every(isNumber)) return;
+          otherPlayers[msg.id] = {
+            sprite: msg.sprite,
+            posX: msg.posX, posY: msg.posY, velX: msg.velX, velY: msg.velY,
+            rightFacing: !!msg.rightFacing, boosting: !!msg.boosting
+          };
+        } else if (msg.type == "disconnect") {
+          if (isNumber(msg.id) && otherPlayers[msg.id]) {
+            delete otherPlayers[msg.id];
+          }
+        } else if (msg.type == "connect") {
+          socket.send(movementMessage());
+        } else if (msg.type == "worms") {
+          if (Array.isArray(msg.positions)) {
+            worms = msg.positions.filter(p => Array.isArray(p) && p.length === 2 && p.every(isNumber));
+          }
+        }
+      }
+    });
+
+    // Test hook (read-only use in browser tests): current shared state.
+    window.__lightsailGame = {
+      get worms() { return worms; },
+      get otherPlayers() { return otherPlayers; },
+      get sprite() { return mySprite; },
+      get connected() { return socket.isOpen(); },
+      setPosition(x, y) { window.playerPos.x = x; window.playerPos.y = y; }
+    };
 
     const canvas = document.getElementById('gameCanvas');
     const ctx = canvas.getContext('2d');
@@ -87,9 +121,6 @@
     const resolutionScale = 8;
     let grassPattern = null;
     let grassPatternCanvas = null;
-    let lastXSpeed = 0;
-    let lastYSpeed = 0;
-    let boostUntil = 0;
 
     grassImg.src = 'Grass.png';
     grassImg.onload = () => {
@@ -181,18 +212,9 @@
       window.playerPos.y += ySpeed
 
       if (xSpeed != lastXSpeed || ySpeed != lastYSpeed) {
-        ws.send(JSON.stringify({
-          type: "movement",
-          image: robinImg.src,
-          posX: window.playerPos.x,
-          posY: window.playerPos.y,
-          velX: xSpeed,
-          velY: ySpeed,
-          rightFacing: rightFacing,
-          boosting: boostUntil > Date.now()
-        }));
         lastXSpeed = xSpeed;
         lastYSpeed = ySpeed;
+        socket.send(movementMessage());
       }
 
       // Clear canvas
@@ -230,7 +252,7 @@
 
       // Draw worms
       for (let i = 0; i < worms.length; i++) {
-        positions = worms[i];
+        const positions = worms[i];
         const dpr = window.devicePixelRatio || 1;
         const centerX = (canvas.width / dpr) / 2;
         const centerY = (canvas.height / dpr) / 2;
@@ -248,20 +270,17 @@
         const distanceSquared = dx * dx + dy * dy;
         const eatThreshold = 40; // pixels, adjust as needed
         if (distanceSquared < eatThreshold*eatThreshold) {
-          ws.send(JSON.stringify({
-            type: "eat",
-            worm_id: i
-          }));
-          boostUntil = Date.now() + 3000 // milliseconds
+          if (socket.send({ type: "eat", worm_id: i })) {
+            boostUntil = Date.now() + 3000; // milliseconds
+          }
         }
       }
 
       // Draw other players
       for (const id in otherPlayers) {
         const player = otherPlayers[id];
-        playerImg = new Image()
-        playerImg.src = player.image
-        if (playerImg.complete && playerImg.naturalWidth > 0) {
+        const playerImg = spriteImages[player.sprite];
+        if (playerImg && playerImg.complete && playerImg.naturalWidth > 0) {
           const dpr = window.devicePixelRatio || 1;
           const centerX = (canvas.width / dpr) / 2;
           const centerY = (canvas.height / dpr) / 2;
@@ -419,9 +438,10 @@
       setTimeout(resizeCanvas, 200);
     });
 
-    // Initial setup
+    // Initial setup: one animation loop, one socket (reconnects reuse both).
     resizeCanvas();
     loop();
+    socket.connect();
   </script>
 </body>
 </html>

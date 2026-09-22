@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>WebSocket Chat</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="stylesheet" href="/shared/demo.css">
+  <style>
+    body {
+      background: #232946;
+      color: #fffffe;
+      font-family: 'Segoe UI', Arial, sans-serif;
+      margin: 0;
+      padding: 0;
+      min-height: 100vh;
+    }
+    h1 {
+      text-align: center;
+      margin-top: 30px;
+      letter-spacing: 2px;
+      color: #eebbc3;
+    }
+    #chat {
+      background: #121629;
+      border-radius: 8px;
+      margin: 20px auto 20px auto;
+      padding: 20px;
+      width: 90%;
+      max-width: 600px;
+      height: 350px;
+      overflow-y: auto;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.2);
+      font-size: 1.05em;
+      box-sizing: border-box;
+    }
+    #chat p {
+      margin: 0 0 10px 0;
+      padding: 6px 10px;
+      border-radius: 5px;
+      background: #393d5b;
+      word-break: break-word;
+      white-space: pre-wrap;
+    }
+    #chat p.you {
+      background: #4a4f78;
+    }
+    #chat p:last-child {
+      margin-bottom: 0;
+    }
+    #name, #msg {
+      width: 200px;
+      padding: 10px;
+      margin: 0 10px 10px 0;
+      border: none;
+      border-radius: 5px;
+      background: #393d5b;
+      color: #fffffe;
+      font-size: 1em;
+      outline: none;
+      transition: background 0.2s;
+      display: block;
+      margin-left: auto;
+      margin-right: auto;
+    }
+    #name:focus, #msg:focus {
+      background: #eebbc3;
+      color: #232946;
+    }
+    #msg {
+      width: 350px;
+      max-width: 60vw;
+    }
+    button.send {
+      padding: 10px 22px;
+      background: #eebbc3;
+      color: #232946;
+      border: none;
+      border-radius: 5px;
+      font-weight: bold;
+      font-size: 1em;
+      cursor: pointer;
+      transition: background 0.2s, color 0.2s;
+      display: block;
+      margin-left: auto;
+      margin-right: auto;
+    }
+    button.send:hover {
+      background: #fffffe;
+      color: #232946;
+    }
+    .demo-status button.reconnect { color: #eebbc3; }
+  </style>
+</head>
+<body>
+  <h1>WebSocket Chat</h1>
+  <input id="name" type="text" placeholder="Enter Name..." maxlength="32" autocomplete="off">
+  <div id="chat" aria-live="polite"></div>
+  <input id="msg" type="text" placeholder="Type a message ..." maxlength="500" autocomplete="off">
+  <button type="button" class="send" id="send">Send</button>
+
+  <script src="/shared/demo-socket.js"></script>
+  <script>
+    (function () {
+      'use strict';
+      var chat = document.getElementById('chat');
+      var input = document.getElementById('msg');
+      var nameInput = document.getElementById('name');
+
+      // Every line is added as a text node: names and messages from other
+      // people (or from this page) are never interpreted as HTML.
+      function appendLine(text, className) {
+        var p = document.createElement('p');
+        if (className) p.className = className;
+        p.textContent = text;
+        chat.appendChild(p);
+        while (chat.childElementCount > 500) chat.removeChild(chat.firstChild);
+        chat.scrollTop = chat.scrollHeight;
+      }
+
+      var socket = new LightsailDemo.DemoSocket('/ws/chat', {
+        status: { parent: document.body, before: chat },
+        onMessage: function (msg) {
+          if (msg.type !== 'chat' || typeof msg.name !== 'string' || typeof msg.text !== 'string') return;
+          appendLine(msg.name + ': ' + msg.text);
+        }
+      });
+
+      function sendMessage() {
+        var text = input.value.trim();
+        if (!text) return;
+        var name = nameInput.value.trim() || 'Anonymous';
+        if (!socket.send({ type: 'chat', name: name, text: text })) {
+          appendLine('Not connected. Use Reconnect and try again.', 'you');
+          return;
+        }
+        appendLine('You: ' + text, 'you');
+        input.value = '';
+      }
+
+      document.getElementById('send').addEventListener('click', sendMessage);
+      input.addEventListener('keydown', function (event) {
+        if (event.key === 'Enter') sendMessage();
+      });
+
+      socket.connect();
+    })();
+  </script>
+</body>
+</html>

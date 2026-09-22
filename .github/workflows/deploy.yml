@@ -1,0 +1,194 @@
+# lightsail-demo production deployment (deployment contract v1).
+#
+# Deploys ONLY the main branch, either when a commit lands on main (push) or
+# when "Run workflow" is used from main (workflow_dispatch). Pull requests
+# never run this workflow and never see the deployment secrets. The gate is:
+#
+#   github.ref == 'refs/heads/main' && (push || workflow_dispatch)
+#
+# Sequence: verify + test + build the artifact for the exact commit -> check
+# the commit is still the head of main (stale runs are refused) -> upload and
+# activate it on the server through the restricted deployment account with a
+# pinned host key -> verify the public site reports the new revision.
+#
+# Repository configuration (Settings -> Secrets and variables -> Actions):
+#   Variables: LIGHTSAIL_HOST (the VM's static IPv4), LIGHTSAIL_USER (deploy-lightsail-demo)
+#   Secrets:   LIGHTSAIL_SSH_PRIVATE_KEY (the app-specific key), LIGHTSAIL_KNOWN_HOSTS
+# See docs/deployment.md.
+
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  PYTHONDONTWRITEBYTECODE: "1"
+  PUBLIC_URL: https://lightsail-demo.cowhill.dev
+
+jobs:
+  build:
+    name: Verify and build the release
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    outputs:
+      sha: ${{ github.sha }}
+    steps:
+      - name: Check out the exact commit
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Set up Python 3.12 (the Ubuntu 24.04 server interpreter)
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Install the runtime lock and development dependencies
+        run: |
+          set -euo pipefail
+          python -m venv .venv-runtime
+          .venv-runtime/bin/python -m pip install --require-virtualenv --require-hashes --no-deps -r requirements.txt
+          python -m pip install --require-hashes -r requirements-dev.txt
+
+      - name: Lint and test (a red commit never reaches the server)
+        env:
+          LIGHTSAIL_TEST_WHEELHOUSE: ${{ runner.temp }}/wheelhouse
+        run: |
+          set -euo pipefail
+          ruff check .
+          ruff format --check .
+          python -m pytest -m "not browser and not caddy" -p no:cacheprovider
+
+      - name: Build and inspect the artifact
+        run: |
+          set -euo pipefail
+          scripts/build-release.sh --sha "${GITHUB_SHA}" --out dist
+          python3 scripts/inspect_release.py "dist/lightsail-demo-${GITHUB_SHA}.tar.gz" \
+            --sha "${GITHUB_SHA}" --checksum "dist/lightsail-demo-${GITHUB_SHA}.tar.gz.sha256"
+
+      - name: Upload the artifact for the deploy job
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: release-${{ github.sha }}
+          path: dist/
+          retention-days: 14
+          if-no-files-found: error
+
+  deploy:
+    name: Deploy to the Lightsail server
+    needs: build
+    runs-on: ubuntu-latest
+    # Repeated for defence in depth: the job must never run for another ref
+    # or event, even if the build job's condition is edited by mistake.
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    # One deployment at a time; an in-flight activation is never cancelled.
+    concurrency:
+      group: deploy-lightsail-demo-production
+      cancel-in-progress: false
+    environment:
+      name: production
+      url: https://lightsail-demo.cowhill.dev
+    env:
+      LIGHTSAIL_HOST: ${{ vars.LIGHTSAIL_HOST }}
+      LIGHTSAIL_USER: ${{ vars.LIGHTSAIL_USER }}
+      RELEASE_SHA: ${{ needs.build.outputs.sha }}
+    steps:
+      - name: Check required variables and secrets
+        # Secrets are only tested for presence through expressions; their
+        # values never reach the shell or the log.
+        env:
+          HAS_SSH_PRIVATE_KEY: ${{ secrets.LIGHTSAIL_SSH_PRIVATE_KEY != '' }}
+          HAS_KNOWN_HOSTS: ${{ secrets.LIGHTSAIL_KNOWN_HOSTS != '' }}
+        run: |
+          set -euo pipefail
+          missing=()
+          [[ -n "${LIGHTSAIL_HOST}" ]]             || missing+=("repository variable LIGHTSAIL_HOST")
+          [[ -n "${LIGHTSAIL_USER}" ]]             || missing+=("repository variable LIGHTSAIL_USER")
+          [[ "${HAS_SSH_PRIVATE_KEY}" == "true" ]] || missing+=("repository secret LIGHTSAIL_SSH_PRIVATE_KEY")
+          [[ "${HAS_KNOWN_HOSTS}" == "true" ]]     || missing+=("repository secret LIGHTSAIL_KNOWN_HOSTS")
+          if (( ${#missing[@]} > 0 )); then
+            echo "::error::Missing required GitHub Actions configuration (Settings -> Secrets and variables -> Actions):"
+            printf '::error::  - %s\n' "${missing[@]}"
+            echo "::error::See docs/deployment.md, 'Repository settings'. Nothing was deployed."
+            exit 1
+          fi
+          [[ "${LIGHTSAIL_USER}" == "deploy-lightsail-demo" ]] \
+            || { echo "::error::LIGHTSAIL_USER must be deploy-lightsail-demo (contract v1), got '${LIGHTSAIL_USER}'"; exit 1; }
+          echo "All required variables and secrets are present."
+
+      - name: Check out the exact commit
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ needs.build.outputs.sha }}
+          persist-credentials: false
+
+      - name: Refuse a stale run (main has moved on)
+        # A queued run for an older commit must not overwrite a newer release.
+        # The read-only workflow token is enough to look up the branch head.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          head="$(curl -fsS --retry 3 -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" \
+            "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/branches/main" \
+            | python3 -c 'import json,sys; print(json.load(sys.stdin)["commit"]["sha"])')"
+          if [[ "${head}" != "${RELEASE_SHA}" ]]; then
+            echo "::error::main is now at ${head}; this run is for ${RELEASE_SHA} and is superseded. Nothing was deployed."
+            exit 1
+          fi
+          echo "${RELEASE_SHA} is the current head of main."
+
+      - name: Download the built artifact
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        with:
+          name: release-${{ needs.build.outputs.sha }}
+          path: dist
+
+      - name: Re-verify the artifact before it leaves the runner
+        run: |
+          set -euo pipefail
+          ls -l dist
+          python3 scripts/inspect_release.py "dist/lightsail-demo-${RELEASE_SHA}.tar.gz" \
+            --sha "${RELEASE_SHA}" --checksum "dist/lightsail-demo-${RELEASE_SHA}.tar.gz.sha256" --quiet
+          echo "artifact matches ${RELEASE_SHA}"
+
+      - name: Prepare SSH identity and pinned host key
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.LIGHTSAIL_SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS_VALUE: ${{ secrets.LIGHTSAIL_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p "${RUNNER_TEMP}/ssh"
+          printf '%s\n' "${SSH_PRIVATE_KEY}" > "${RUNNER_TEMP}/ssh/id_deploy"
+          printf '%s\n' "${SSH_KNOWN_HOSTS_VALUE}" > "${RUNNER_TEMP}/ssh/known_hosts"
+          chmod 0600 "${RUNNER_TEMP}/ssh/id_deploy" "${RUNNER_TEMP}/ssh/known_hosts"
+          # Usable, passphrase-less key? (prints nothing about the key itself)
+          if ! ssh-keygen -y -P '' -f "${RUNNER_TEMP}/ssh/id_deploy" >/dev/null 2>&1; then
+            echo "::error::LIGHTSAIL_SSH_PRIVATE_KEY is not a usable passphrase-less OpenSSH private key."
+            exit 1
+          fi
+          if ! ssh-keygen -F "${LIGHTSAIL_HOST}" -f "${RUNNER_TEMP}/ssh/known_hosts" >/dev/null 2>&1; then
+            echo "::error::LIGHTSAIL_KNOWN_HOSTS has no entry for ${LIGHTSAIL_HOST}; refusing to connect without the verified host key."
+            exit 1
+          fi
+          echo "SSH identity prepared for ${LIGHTSAIL_USER}@${LIGHTSAIL_HOST} (fingerprint: $(ssh-keygen -lf "${RUNNER_TEMP}/ssh/id_deploy" | cut -d' ' -f2))"
+
+      - name: Deploy (upload, build venv on the VM, switch, restart, verify)
+        env:
+          ARTIFACT: dist/lightsail-demo-${{ needs.build.outputs.sha }}.tar.gz
+          SSH_KEY_FILE: ${{ runner.temp }}/ssh/id_deploy
+          SSH_KNOWN_HOSTS: ${{ runner.temp }}/ssh/known_hosts
+          DEPLOY_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+        run: scripts/deploy/deploy.sh
+
+      - name: Remove SSH material from the runner
+        if: always()
+        run: rm -rf "${RUNNER_TEMP}/ssh"

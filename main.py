@@ -1,122 +1,72 @@
+"""Entrypoint for the lightsail-demo backend.
+
+Production (systemd, deployment contract version 1) runs exactly::
+
+    /srv/apps/lightsail-demo/current/.venv/bin/python /srv/apps/lightsail-demo/current/main.py
+
+with HOST, PORT, SERVE_STATIC and ALLOWED_ORIGINS from the root-owned
+environment file. Locally, ``python main.py`` serves the frontend from
+``public/`` and the WebSocket backends on http://127.0.0.1:8080.
+
+Invalid configuration or an occupied port is a startup failure (exit status
+1 with a one-line reason). The process never falls back to another interface
+or port.
+"""
+
+from __future__ import annotations
+
+import logging
+import sys
+
 from aiohttp import web
-import os
-import json
-import random
 
-chat_connected_clients = set()
+from lightsail_demo.app import create_app
+from lightsail_demo.config import ConfigError, load_settings
 
-# Chat WebSocket handler
-async def chat_websocket_handler(request):
-  ws = web.WebSocketResponse()
-  await ws.prepare(request)
+log = logging.getLogger("lightsail_demo.main")
 
-  chat_connected_clients.add(ws)
-  print("Client connected.  Total: ", len(chat_connected_clients))
 
-  try:
-    async for msg in ws:
-      if msg.type == web.WSMsgType.TEXT:
-        for client in chat_connected_clients:
-          if not client.closed and client != ws:
-            await client.send_str(f"{msg.data}")
-      elif msg.type == web.WSMsgType.ERROR:
-        print(f"WebSocket error: {ws.exception()}")
-  finally:
-    chat_connected_clients.remove(ws)
-    print("Client disconnected.  Total: ", len(chat_connected_clients))
+def main() -> int:
+    try:
+        settings = load_settings()
+    except ConfigError as exc:
+        print(f"lightsail-demo: configuration error: {exc}", file=sys.stderr)
+        return 1
 
-  return ws
+    logging.basicConfig(
+        level=getattr(logging, settings.log_level),
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        stream=sys.stdout,
+    )
 
-draw_connected_clients = set()
+    try:
+        app = create_app(settings)
+    except (ConfigError, FileNotFoundError) as exc:
+        log.error("startup failed: %s", exc)
+        return 1
 
-# Chat WebSocket handler
-async def draw_websocket_handler(request):
-  ws = web.WebSocketResponse()
-  await ws.prepare(request)
+    try:
+        web.run_app(
+            app,
+            host=settings.host,
+            port=settings.port,
+            print=None,
+            # The access log is off by default: Caddy already logs requests and
+            # the health poller would otherwise fill the journal. LOG_LEVEL=DEBUG
+            # turns it on.
+            access_log=logging.getLogger("aiohttp.access") if settings.log_level == "DEBUG" else None,
+            shutdown_timeout=10.0,
+            # SO_REUSEADDR (the POSIX default) lets a restart bind while the
+            # previous process's connections are still in TIME_WAIT. It does
+            # not allow two listeners on the port; SO_REUSEPORT would, and is
+            # explicitly disabled so a second process fails instead of sharing.
+            reuse_port=False,
+        )
+    except OSError as exc:
+        log.error("could not bind %s:%d: %s", settings.host, settings.port, exc.strerror or exc)
+        return 1
+    return 0
 
-  draw_connected_clients.add(ws)
-  print("Client connected.  Total: ", len(draw_connected_clients))
 
-  try:
-    async for msg in ws:
-      if msg.type == web.WSMsgType.TEXT:
-        for client in draw_connected_clients:
-          if not client.closed and client != ws:
-            await client.send_str(f"{msg.data}")
-      elif msg.type == web.WSMsgType.ERROR:
-        print(f"WebSocket error: {ws.exception()}")
-  finally:
-    draw_connected_clients.remove(ws)
-    print("Client disconnected.  Total: ", len(draw_connected_clients))
-
-  return ws
-
-game_connected_clients = set()
-
-worms = [[random.randint(-1000, 1000) for i in range(2)] for j in range(10)]
-
-# Chat WebSocket handler
-async def game_websocket_handler(request):
-  ws = web.WebSocketResponse()
-  await ws.prepare(request)
-
-  game_connected_clients.add(ws)
-  ws_id = random.getrandbits(32)
-  print("Client connected.  Total: ", len(game_connected_clients))
-
-  worm_data = {
-    "type": "worms",
-    "positions": worms
-  }
-  await ws.send_str(json.dumps(worm_data))
-
-  try:
-    async for msg in ws:
-      if msg.type == web.WSMsgType.TEXT:
-        try:
-          data = json.loads(msg.data)
-        except json.JSONDecodeError as e:
-          print(f"JSON decode error: {e}")
-          continue
-        if data["type"] in ["movement", "connect"]:
-          data["id"] = ws_id
-          for client in game_connected_clients:
-            if not client.closed and client != ws:
-                await client.send_str(json.dumps(data))
-        elif data["type"] == "eat":
-          worm_data["positions"][data["worm_id"]] = [random.randint(-1000, 1000) for i in range(2)]
-          for client in game_connected_clients:
-            if not client.closed:
-              await ws.send_str(json.dumps(worm_data))
-      elif msg.type == web.WSMsgType.ERROR:
-        print(f"WebSocket error: {ws.exception()}")
-  finally:
-    game_connected_clients.remove(ws)
-    print("Client disconnected.  Total: ", len(game_connected_clients))
-    for client in game_connected_clients:
-      if not client.closed:
-        data = {
-          "type": "disconnect",
-          "id": ws_id
-        }
-        await client.send_str(json.dumps(data))
-
-  return ws
-
-# HTTP handler
-async def index(request):
-  return web.FileResponse('index.html')
-
-# App setup
-app = web.Application()
-app.add_routes([
-  web.get('/', index),
-  web.get('/ws/chat', chat_websocket_handler),
-  web.get('/ws/draw', draw_websocket_handler),
-  web.get('/ws/game', game_websocket_handler),
-])
-app.router.add_static('/', path=os.path.abspath('.'), show_index=True)
-
-# Run both servers on the same port
 if __name__ == "__main__":
-  web.run_app(app, host='0.0.0.0', port=8080)
+    sys.exit(main())
