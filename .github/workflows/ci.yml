@@ -246,8 +246,12 @@ jobs:
           diff -u /tmp/requirements.before requirements.txt
           diff -u /tmp/requirements-dev.before requirements-dev.txt
 
-      - name: GitHub dependency review (pull requests)
+      - name: GitHub dependency review (pull requests; advisory until Dependency graph is enabled)
+        # Requires Settings -> Code security -> Dependency graph on the
+        # repository. Until it is enabled this step reports an error but does
+        # not fail the job; pip-audit above is the enforced check.
         if: github.event_name == 'pull_request'
+        continue-on-error: true
         uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
         with:
           fail-on-severity: moderate
