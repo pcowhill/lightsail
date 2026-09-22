@@ -205,3 +205,16 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# lightsail-demo: local virtual environments, release artifacts and test output
+.venv/
+.venv-*/
+venv/
+dist/
+dist-again/
+REVISION
+.release-ready
+*.tar.gz
+*.tar.gz.sha256
+wheelhouse/
+test-results/

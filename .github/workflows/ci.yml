@@ -1,0 +1,253 @@
+# lightsail-demo continuous integration.
+#
+# Runs on every pull request and on every push to main. These jobs receive no
+# production variables or secrets and never contact the Lightsail server;
+# deployment lives in deploy.yml. Every third-party action is pinned to a full
+# commit SHA (the tag is noted in a comment) and every downloaded tool is
+# checksum-verified.
+
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  PYTHONDONTWRITEBYTECODE: "1"
+  # Tool releases used by the shell/workflow and Caddy jobs (checksums below).
+  CADDY_VERSION: "2.11.4"
+  CADDY_SHA512: "8220d1f013b6f27510247b2360c9e0ca9f018feebd82515f07635318b34ff9777ccc8fd0b6e6f2486ce3a33fe389fbb7db12d05baa474f4587509fb4f5ebf1c9"
+  ACTIONLINT_VERSION: "1.7.9"
+  ACTIONLINT_SHA256: "233b280d05e100837f4af1433c7b40a5dcb306e3aa68fb4f17f8a7f45a7df7b4"
+  SHELLCHECK_VERSION: "0.11.0"
+  SHELLCHECK_SHA256: "8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198"
+
+jobs:
+  python:
+    name: Python ${{ matrix.python }} lint and tests
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The server range is 3.10-3.12 (Ubuntu 22.04 / 24.04). 3.13 is checked
+        # too so the next Ubuntu LTS does not surprise us, but is not required.
+        python: ["3.10", "3.11", "3.12", "3.13"]
+        include:
+          - python: "3.13"
+            experimental: true
+    continue-on-error: ${{ matrix.experimental == true }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Python ${{ matrix.python }}
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install the runtime lock exactly as the server does
+        # --require-hashes with --no-deps: the lock must be complete and every
+        # download must match a recorded hash, on every supported interpreter.
+        run: |
+          set -euo pipefail
+          python -m venv .venv-runtime
+          .venv-runtime/bin/python -m pip install --require-virtualenv --require-hashes --no-deps -r requirements.txt
+          .venv-runtime/bin/python -c 'import aiohttp, lightsail_demo.app; print("runtime lock ok, aiohttp", aiohttp.__version__)'
+
+      - name: Install development dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install --require-hashes -r requirements-dev.txt
+
+      - name: Lint (ruff)
+        run: |
+          set -euo pipefail
+          ruff check .
+          ruff format --check .
+
+      - name: Unit, integration and sandboxed deployment tests
+        env:
+          LIGHTSAIL_TEST_WHEELHOUSE: ${{ runner.temp }}/wheelhouse
+        run: |
+          set -euo pipefail
+          python -m pytest -m "not browser and not caddy" -p no:cacheprovider
+
+  frontend:
+    name: Frontend syntax and browser tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Check public/ JavaScript syntax with Node
+        run: node scripts/check-frontend.js
+
+      - name: Install development dependencies and Chromium
+        run: |
+          set -euo pipefail
+          python -m pip install --require-hashes -r requirements-dev.txt
+          python -m playwright install --with-deps chromium
+
+      - name: Browser tests (two independent contexts per applet)
+        env:
+          RUN_BROWSER_TESTS: "1"
+        run: python -m pytest -m browser -p no:cacheprovider
+
+  caddy:
+    name: Caddy integration (loopback, ACME disabled)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Install Caddy (pinned official release, checksum verified)
+        run: |
+          set -euo pipefail
+          base="https://github.com/caddyserver/caddy/releases/download/v${CADDY_VERSION}"
+          archive="caddy_${CADDY_VERSION}_linux_amd64.tar.gz"
+          tmp="$(mktemp -d)"
+          curl -fsSL --retry 3 -o "${tmp}/${archive}" "${base}/${archive}"
+          echo "${CADDY_SHA512}  ${tmp}/${archive}" | sha512sum --check --strict
+          tar -xzf "${tmp}/${archive}" -C "${tmp}" caddy
+          sudo install -m 0755 "${tmp}/caddy" /usr/local/bin/caddy
+          caddy version
+
+      - name: Install development dependencies
+        run: python -m pip install --require-hashes -r requirements-dev.txt
+
+      - name: Caddy routing, static and WebSocket proxy tests
+        env:
+          REQUIRE_CADDY: "1"
+        run: python -m pytest -m caddy -p no:cacheprovider
+
+  release:
+    name: Release artifact build and inspection
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Build the artifact for this exact commit
+        run: scripts/build-release.sh --sha "${GITHUB_SHA}" --out dist
+
+      - name: Inspect every member and verify the checksum
+        run: |
+          set -euo pipefail
+          python3 scripts/inspect_release.py "dist/lightsail-demo-${GITHUB_SHA}.tar.gz" \
+            --sha "${GITHUB_SHA}" --checksum "dist/lightsail-demo-${GITHUB_SHA}.tar.gz.sha256"
+
+      - name: Build again and require identical bytes (reproducibility)
+        run: |
+          set -euo pipefail
+          scripts/build-release.sh --sha "${GITHUB_SHA}" --out dist-again >/dev/null
+          cmp "dist/lightsail-demo-${GITHUB_SHA}.tar.gz" "dist-again/lightsail-demo-${GITHUB_SHA}.tar.gz"
+          echo "reproducible"
+
+      - name: Upload the inspected artifact (CI evidence only; deploy.yml builds its own)
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: lightsail-demo-${{ github.sha }}
+          path: dist/
+          retention-days: 7
+          if-no-files-found: error
+
+  shell:
+    name: Shell and workflow validation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Install shellcheck and actionlint (pinned, checksum verified)
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          curl -fsSL --retry 3 -o "${tmp}/shellcheck.tar.xz" \
+            "https://github.com/koalaman/shellcheck/releases/download/v${SHELLCHECK_VERSION}/shellcheck-v${SHELLCHECK_VERSION}.linux.x86_64.tar.xz"
+          echo "${SHELLCHECK_SHA256}  ${tmp}/shellcheck.tar.xz" | sha256sum --check --strict
+          tar -xJf "${tmp}/shellcheck.tar.xz" -C "${tmp}"
+          sudo install -m 0755 "${tmp}/shellcheck-v${SHELLCHECK_VERSION}/shellcheck" /usr/local/bin/shellcheck
+          curl -fsSL --retry 3 -o "${tmp}/actionlint.tar.gz" \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          echo "${ACTIONLINT_SHA256}  ${tmp}/actionlint.tar.gz" | sha256sum --check --strict
+          tar -xzf "${tmp}/actionlint.tar.gz" -C "${tmp}" actionlint
+          sudo install -m 0755 "${tmp}/actionlint" /usr/local/bin/actionlint
+          shellcheck --version | head -2
+          actionlint --version
+
+      - name: shellcheck
+        run: shellcheck -S style scripts/*.sh scripts/deploy/*.sh tests/deploy/*.sh
+
+      - name: actionlint
+        run: actionlint -color
+
+      - name: Workflow guard rails
+        # The deployment gate and least-privilege settings are checked
+        # textually so a careless edit fails CI instead of deploying a branch.
+        run: python3 scripts/check-workflows.py
+
+  dependency-review:
+    name: Dependency review and audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Audit the runtime lock against known vulnerabilities
+        run: |
+          set -euo pipefail
+          python -m pip install --require-hashes -r requirements-dev.txt
+          pip-audit --progress-spinner off --strict -r requirements.txt --no-deps
+          pip-audit --progress-spinner off --strict -r requirements-dev.txt --no-deps
+
+      - name: Check the lock is in sync with requirements/*.in
+        run: |
+          set -euo pipefail
+          cp requirements.txt /tmp/requirements.before
+          cp requirements-dev.txt /tmp/requirements-dev.before
+          scripts/lock-requirements.sh
+          diff -u /tmp/requirements.before requirements.txt
+          diff -u /tmp/requirements-dev.before requirements-dev.txt
+
+      - name: GitHub dependency review (pull requests)
+        if: github.event_name == 'pull_request'
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: moderate

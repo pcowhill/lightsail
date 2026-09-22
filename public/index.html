@@ -52,6 +52,13 @@
       color: #232526;
       transform: translateY(-2px) scale(1.03);
     }
+    .notice {
+      margin: 1.5rem auto 0;
+      max-width: 420px;
+      font-size: 0.85rem;
+      line-height: 1.4;
+      color: #cfcfcf;
+    }
     @media (max-width: 600px) {
       .container {
         padding: 1rem;
@@ -70,10 +77,15 @@
   <div class="container">
     <h1>Lightsail Tower</h1>
     <div class="links">
-      <a href="chat/index.html">WebSocket Chat</a>
-      <a href="draw/index.html">WebSocket Draw</a>
-      <a href="game/index.html">WebSocket Game</a>
+      <a href="chat/">WebSocket Chat</a>
+      <a href="draw/">WebSocket Draw</a>
+      <a href="game/">WebSocket Game</a>
     </div>
+    <p class="notice">
+      Public shared demo: everyone connected at the same time shares one chat,
+      one canvas and one game world. Nothing here is private, and updates or
+      restarts disconnect everyone and reset the server state.
+    </p>
   </div>
 </body>
 </html>

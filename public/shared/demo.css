@@ -1,0 +1,59 @@
+/* lightsail-demo: connection status, reconnect control and demo notice. */
+.demo-status {
+  font-family: 'Segoe UI', Arial, sans-serif;
+  text-align: center;
+  margin: 0.5rem auto 0.75rem auto;
+  max-width: 640px;
+  padding: 0 1rem;
+}
+.demo-status-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  font-size: 0.95rem;
+}
+.demo-status .dot {
+  display: inline-block;
+  width: 0.65rem;
+  height: 0.65rem;
+  border-radius: 50%;
+  background: #9a9a9a;
+}
+.demo-status[data-state="connecting"] .dot { background: #f5b942; }
+.demo-status[data-state="open"] .dot { background: #3ac569; }
+.demo-status[data-state="closed"] .dot { background: #e5484d; }
+.demo-status button.reconnect {
+  display: inline-block;
+  margin: 0;
+  padding: 0.3rem 0.9rem;
+  font-size: 0.85rem;
+  border: 1px solid currentColor;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.demo-notice {
+  font-size: 0.8rem;
+  opacity: 0.8;
+  margin: 0.35rem 0 0 0;
+  line-height: 1.35;
+}
+/* Fullscreen pages (the game) show the status as a small overlay. */
+.demo-status.demo-overlay {
+  position: fixed;
+  top: 8px;
+  left: 8px;
+  right: auto;
+  max-width: min(420px, calc(100vw - 16px));
+  margin: 0;
+  padding: 0.45rem 0.7rem;
+  background: rgba(0, 0, 0, 0.6);
+  color: #f5f5f5;
+  border-radius: 8px;
+  text-align: left;
+  z-index: 10;
+}
+.demo-status.demo-overlay .demo-status-row { justify-content: flex-start; }

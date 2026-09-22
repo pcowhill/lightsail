@@ -1,0 +1,2 @@
+# Runtime dependencies (top-level). Lock with: scripts/lock-requirements.sh
+aiohttp==3.14.3
